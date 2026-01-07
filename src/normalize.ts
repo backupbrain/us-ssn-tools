@@ -1,89 +1,74 @@
-import { formatSsnFromDigits } from './utils';
+import { formatSsnFromDigits, formatSsnWithOverflow } from './utils';
 
 export interface NormalizeSsnOptions {
-  allowNoDashes?: boolean;
+  /**
+   * If true, formats prefixes while typing.
+   * - dashed mode: "1234" -> "123-4"
+   * - digits-only mode: returns digits as-is
+   *
+   * Default: true
+   */
   allowPartial?: boolean;
+
+  /**
+   * If true, return digits only (no dashes inserted).
+   * If false, insert dashes in ###-##-#### style.
+   *
+   * Default: false
+   */
+  digitsOnly?: boolean;
+
+  /**
+   * If true, cap extracted digits at 9.
+   * If false, allow any number of digits (useful for UI behavior testing).
+   *
+   * Default: true
+   */
+  enforceLength?: boolean;
 }
 
-export type NormalizeSsnOk = {
-  ok: true;
-  digits: string;
-  normalized: string;
-};
-
-export type NormalizeSsnErr = {
-  ok: false;
-  message: string;
-};
-
-export type NormalizeSsnResult = NormalizeSsnOk | NormalizeSsnErr;
-
-export function normalizeSsnInput(
+/**
+ * Best-effort SSN normalization for UI display.
+ * - Returns a string only (no validity info).
+ * - Never throws.
+ * - Extracts digits from input and optionally inserts dashes.
+ * - Optionally caps to 9 digits (enforceLength).
+ * - Keeps behavior predictable for "typing-as-you-go".
+ */
+export function normalizeSsn(
   input: string,
   opts: NormalizeSsnOptions = {}
-): NormalizeSsnResult {
-  const allowNoDashes = opts.allowNoDashes ?? true;
-  const allowPartial = opts.allowPartial ?? false;
+): string {
+  const allowPartial = opts.allowPartial ?? true;
+  const digitsOnly = opts.digitsOnly ?? false;
+  const enforceLength = opts.enforceLength ?? true;
 
-  const raw = input;
-
-  // Full (non-partial) normalization
-  if (!allowPartial) {
-    if (/^\d{3}-\d{2}-\d{4}$/.test(raw)) {
-      return {
-        ok: true,
-        digits: raw.replace(/-/g, ''),
-        normalized: raw,
-      };
-    }
-
-    if (allowNoDashes && /^\d{9}$/.test(raw)) {
-      return {
-        ok: true,
-        digits: raw,
-        normalized: `${raw.slice(0, 3)}-${raw.slice(3, 5)}-${raw.slice(5)}`,
-      };
-    }
-
-    return { ok: false, message: 'Invalid SSN format.' };
-  }
-
-  // ---- Partial / typing-as-you-go normalization ----
-
-  if (!/^[0-9-]*$/.test(raw)) {
-    return { ok: false, message: "Only digits and '-' are allowed." };
-  }
-
+  // Extract digits, optionally cap to 9 for SSN-shaped output.
   let digits = '';
-  let sawDashAt3 = false;
-  let sawDashAt5 = false;
-
-  for (const ch of raw) {
+  for (const ch of input) {
     if (ch >= '0' && ch <= '9') {
       digits += ch;
-      if (digits.length > 9) {
-        return { ok: false, message: 'SSN is too long.' };
-      }
-      continue;
-    }
-
-    // ch === '-'
-    if (!allowNoDashes) {
-      return { ok: false, message: 'Dashes are not allowed.' };
-    }
-
-    if (digits.length === 3 && !sawDashAt3) {
-      sawDashAt3 = true;
-    } else if (digits.length === 5 && !sawDashAt5) {
-      sawDashAt5 = true;
-    } else {
-      return { ok: false, message: 'Dash is in an invalid position.' };
+      if (enforceLength && digits.length === 9) break;
     }
   }
 
-  return {
-    ok: true,
-    digits,
-    normalized: formatSsnFromDigits(digits),
-  };
+  if (digitsOnly) {
+    // digits-only output: just return the extracted digits (possibly >9 if enforceLength=false)
+    return digits;
+  }
+
+  // dashed output
+  if (allowPartial) {
+    // Typing mode: format prefix. If digits > 9 and enforceLength=false,
+    // we format the SSN-shaped prefix and append the rest after the serial.
+    return formatSsnWithOverflow(digits);
+  }
+
+  // Non-partial mode: only format if we have a full 9 digits; otherwise return input unchanged.
+  // (Prevents jumpy formatting in contexts where you don't want as-you-type behavior.)
+  if (digits.length === 9 || (enforceLength && digits.length === 9)) {
+    return formatSsnFromDigits(digits.slice(0, 9));
+  }
+
+  return input;
 }

@@ -4,16 +4,18 @@ A small, well-tested TypeScript library for **working with U.S. Social Security 
 
 It provides:
 
-* ✅ **Validation** (strict + typing-as-you-go)
-* 🔁 **Normalization** (canonical `###-##-####` formatting)
-* 🎭 **Masking** (UI-safe, best-effort, privacy-first)
+* ✅ **Validation** (strict + typing-as-you-go, boolean API)
+* 🔁 **Normalization** (deterministic, UI-friendly formatting)
+* 🎭 **Masking** (privacy-first, best-effort, never validates)
 * 🎲 **Generation** (pre-2011, post-2011, random, and publicly advertised SSNs)
 * 🧩 **Zod & Yup adapters** for form validation
 
-> **Design principle:**
-> Validation enforces rules.
-> Masking never leaks data.
-> Normalization is deterministic and UI-friendly.
+> **Design principles**
+>
+> * Validation answers *“is this valid?”* — nothing more.
+> * Normalization formats input for display and typing UX.
+> * Masking never leaks digits and never enforces validity.
+> * Public safety beats convenience.
 
 ---
 
@@ -35,8 +37,8 @@ yarn add us-ssn-tools
 
 ```ts
 import {
-  validateSsn,
-  normalizeSsnInput,
+  isValidSsn,
+  normaliseSsn,
   formatSsnFromDigits,
   maskSsn,
   generateSsn,
@@ -50,81 +52,86 @@ import { yupSsnTyping, yupSsnSubmit } from "us-ssn-tools/yup";
 
 ## Validation
 
-### `validateSsn(input, options)`
+### `isValidSsn(input, options): boolean`
 
-Validates an SSN according to U.S. rules.
+Checks whether an SSN is valid according to U.S. rules.
+
+* Returns **`true` or `false` only**
+* Does **not** normalize
+* Can validate *partial input* (“valid so far”)
 
 ```ts
-const result = validateSsn("123-45-6789");
-
-if (result.ok) {
-  console.log(result.normalized); // "123-45-6789"
-} else {
-  console.log(result.error);   // e.g. "INVALID_AREA"
-  console.log(result.message); // human-readable explanation
-}
+isValidSsn("123-45-6789"); // true
+isValidSsn("123456789");  // false (dashes required by default)
 ```
 
 ### Options
 
 ```ts
 type ValidateSsnOptions = {
-  allowNoDashes?: boolean; // default true
-  allowPartial?: boolean; // default false
-  ruleMode?: "pre2011" | "post2011" | "both"; // default "both"
-};
-```
-
-#### Examples
-
-```ts
-validateSsn("123456789"); // ok (normalized to "123-45-6789")
-
-validateSsn("9", { allowPartial: true }); 
-// ❌ INVALID_AREA (impossible prefix)
-
-validateSsn("773-12-3456", { ruleMode: "pre2011" });
-// ❌ INVALID_AREA
-
-validateSsn("773-12-3456", { ruleMode: "post2011" });
-// ✅ ok
-```
-
----
-
-## Normalization
-
-### `normalizeSsnInput(input, options)`
-
-Parses and formats SSNs **without enforcing full validity**.
-Ideal for **typing-as-you-go**.
-
-```ts
-const res = normalizeSsnInput("1234", { allowPartial: true });
-
-if (res.ok) {
-  res.digits;     // "1234"
-  res.normalized; // "123-4"
-}
-```
-
-### Options
-
-```ts
-type NormalizeSsnOptions = {
-  allowPartial?: boolean;
-  allowNoDashes?: boolean;
+  requireDashes?: boolean;   // default: true
+  allowPartial?: boolean;    // default: false
+  ruleMode?: "pre2011" | "post2011"; // default: "post2011"
 };
 ```
 
 ### Examples
 
 ```ts
-normalizeSsnInput("123456789");
-// → { digits: "123456789", normalized: "123-45-6789" }
+isValidSsn("9", { allowPartial: true });
+// true (still potentially valid)
 
-normalizeSsnInput("123-45-6", { allowPartial: true });
-// → { digits: "123456", normalized: "123-45-6" }
+isValidSsn("900", { allowPartial: true });
+// false (invalid area)
+
+isValidSsn("773-12-3456", { ruleMode: "pre2011" });
+// false
+
+isValidSsn("773-12-3456", { ruleMode: "post2011" });
+// true
+```
+
+---
+
+## Normalization
+
+### `normaliseSsn(input, options): string`
+
+Formats input for **UI display**.
+It does **not validate** and never throws.
+
+* Extracts digits
+* Optionally inserts dashes
+* Supports typing-as-you-go
+* Allows overflow digits if desired
+
+```ts
+normaliseSsn("1234");        // "123-4"
+normaliseSsn("123456789");  // "123-45-6789"
+normaliseSsn("SSN: 12a3");  // "123"
+```
+
+### Options
+
+```ts
+type NormaliseSsnOptions = {
+  allowPartial?: boolean;  // default: true
+  digitsOnly?: boolean;    // default: false
+  enforceLength?: boolean; // default: false
+};
+```
+
+### Examples
+
+```ts
+normaliseSsn("123456789", { digitsOnly: true });
+// "123456789"
+
+normaliseSsn("12345678999");
+// "123-45-678999"
+
+normaliseSsn("12345678999", { enforceLength: true });
+// "123-45-6789"
 ```
 
 ---
@@ -134,7 +141,6 @@ normalizeSsnInput("123-45-6", { allowPartial: true });
 ### `formatSsnFromDigits(digits)`
 
 Formats a **digit string** into SSN shape.
-This function **does not validate**.
 
 ```ts
 formatSsnFromDigits("123");       // "123"
@@ -142,16 +148,20 @@ formatSsnFromDigits("1234");      // "123-4"
 formatSsnFromDigits("123456789"); // "123-45-6789"
 ```
 
-Used internally by normalization and masking, but safe to use directly for UI.
+No validation is performed.
 
 ---
 
 ## Masking (UI-safe)
 
-### `maskSsn(input, options)`
+### `maskSsn(input, options): string`
 
-Masks digits while **never masking dashes**.
-Designed for **privacy-safe UI rendering**, not validation.
+Masks digits after normalization.
+
+* Always normalizes first
+* Never validates
+* Never reveals digits unless explicitly allowed
+* Safe for **any** UI context
 
 ```ts
 maskSsn("123-45-6789");
@@ -165,77 +175,79 @@ maskSsn("123-45-6789", { revealLast4: true });
 
 ```ts
 type MaskSsnOptions = {
-  allowPartial?: boolean;      // default false
-  revealLast4?: boolean;       // default false
-  maskChar?: string;           // default "*"
-  dashMode?: "normalize" | "preserve"; // default "normalize"
-  allowNoDashes?: boolean;     // default true
+  allowPartial?: boolean;   // default: true
+  revealLast4?: boolean;    // default: false
+  maskChar?: string;        // default: "*"
+  digitsOnly?: boolean;     // default: false
+  enforceLength?: boolean;  // default: false
 };
 ```
 
-### Partial / typing behavior
+### Typing behavior
 
 ```ts
-maskSsn("123", { allowPartial: true });
+maskSsn("123"); 
 // "***"
 
-maskSsn("123-45-6", { allowPartial: true, revealLast4: true });
+maskSsn("123-45-6", { revealLast4: true });
 // "***-**-6"
 ```
 
-### Important guarantees
+### Guarantees
 
-* ✔️ **Digits are always masked** (even on invalid input)
+* ✔️ Digits are **always masked**
 * ✔️ Dashes are never masked
-* ✔️ No validation required — safe for UI display
+* ✔️ Invalid input is still safely masked
+* ✔️ No validation logic inside masking
 
 ---
 
 ## Generation
 
-Generates realistic-looking SSNs for testing, demos, and development.
+### `generateSsn(options): string`
+
+Generates SSNs for testing and development.
 
 ```ts
-generateSsn(); 
-// e.g. "509-21-4837"
+generateSsn();
+// one of the publicly advertised SSNs
+```
+
+### Options
+
+```ts
+type GenerateSsnOptions = {
+  mode?: "public" | "pre2011" | "post2011" | "any"; // default: "public"
+  digitsOnly?: boolean; // default: false
+};
 ```
 
 ### ⚠️ Important note on public usage
 
 > **Only use `mode: "public"` for any SSNs that may be displayed publicly.**
 
-SSNs generated with `"pre2011"`, `"post2011"`, or `"any"` modes are **syntactically valid** and may correspond to **real individuals**.
+SSNs generated with `"pre2011"`, `"post2011"`, or `"any"` are **syntactically valid** and may correspond to **real individuals**.
 
-If such a value is:
+If such values are:
 
-* rendered in documentation
-* shown in screenshots
-* logged to public consoles
-* included in sample data or demos
+* shown in documentation
+* used in screenshots
+* logged publicly
+* included in demos or examples
 
-you risk **exposing a real person to identity theft** if the generated SSN happens to match an existing one.
+you risk **exposing a real person to identity theft**.
 
-To prevent this, the library includes a special `"public"` generation mode that returns **historically documented, non-random, publicly advertised SSNs** that are known to be unsafe for real-world use but safe for examples.
-
-### Recommended usage
+The `"public"` mode returns **historically documented, publicly advertised SSNs** that are known to be unsafe for real-world use but safe for examples.
 
 ```ts
-// ✅ Safe for docs, demos, screenshots, and public output
+// ✅ Safe for docs, demos, screenshots
 generateSsn({ mode: "public" });
 
-// ❌ Do NOT use in any public or user-visible context
+// ❌ Never display publicly
 generateSsn({ mode: "any" });
 generateSsn({ mode: "pre2011" });
 generateSsn({ mode: "post2011" });
 ```
-
-Use non-public modes **only** for:
-
-* internal testing
-* private development environments
-* automated test data that is never exposed
-
-This distinction exists to protect real people, not just to satisfy validation rules.
 
 ---
 
@@ -247,7 +259,7 @@ This distinction exists to protect real people, not just to satisfy validation r
 const schema = zodSsnTyping();
 
 schema.parse("1234"); // "123-4"
-schema.parse("9");    // ❌ throws (impossible prefix)
+schema.parse("900");  // ❌ throws
 ```
 
 ### Submit (strict)
@@ -275,14 +287,14 @@ await yupSsnSubmit().validate("123456789");
 
 ## Testing & Guarantees
 
-* ✔️ 100% table-driven Jest tests
-* ✔️ Deterministic RNG support
-* ✔️ Strict separation between:
+* ✔️ Extensive table-driven Jest tests
+* ✔️ Clear separation between:
 
   * validation
-  * formatting
+  * normalization
   * masking
   * generation
+* ✔️ UI-safe defaults everywhere
 
 ---
 
@@ -290,7 +302,7 @@ await yupSsnSubmit().validate("123456789");
 
 * ❌ No storage or encryption
 * ❌ No non-US SSNs (yet)
-* ❌ No implicit trimming or mutation of user input
+* ❌ No mutation of user input beyond formatting
 
 ---
 
@@ -298,13 +310,15 @@ await yupSsnSubmit().validate("123456789");
 
 ISC
 
+---
+
 ## Support This Project
 
-If you find this project useful, consider supporting me to help keep it maintained and improved:
+If you find this project useful, consider supporting it:
 
-- [Sponsor on GitHub](https://github.com/sponsors/backupbrain)
-- [Buy Me a Coffee](https://www.buymeacoffee.com/backupbrain)
-- [Ko-fi](https://ko-fi.com/backupbrain)
-- [Thanks.dev](https://thanks.dev/u/gh/backupbrain)
+* [Sponsor on GitHub](https://github.com/sponsors/backupbrain)
+* [Buy Me a Coffee](https://www.buymeacoffee.com/backupbrain)
+* [Ko-fi](https://ko-fi.com/backupbrain)
+* [Thanks.dev](https://thanks.dev/u/gh/backupbrain)
 
-Your support is greatly appreciated!
+Your support is greatly appreciated 🙏
