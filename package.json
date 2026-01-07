@@ -1,0 +1,59 @@
+{
+  "name": "us-ssn-tools",
+  "version": "1.0.0",
+  "description": "Validate, format, mask, and generate US social security numbers",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "test": "npx jest",
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "lint": "eslint 'src/**/*.ts' 'tests/**/*.ts'",
+    "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts'"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/backupbrain/us-ssn-tools.git"
+  },
+  "keywords": [
+    "identity",
+    "social",
+    "security",
+    "ssn",
+    "social",
+    "security",
+    "number",
+    "us",
+    "social",
+    "security",
+    "number",
+    "identity",
+    "verification"
+  ],
+  "author": "backupbrain@gmail.com",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/backupbrain/us-ssn-tools/issues"
+  },
+  "homepage": "https://github.com/backupbrain/us-ssn-tools#readme",
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/jest": "^30.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.52.0",
+    "@typescript-eslint/parser": "^8.52.0",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "globals": "^17.0.0",
+    "jest": "^30.2.0",
+    "jiti": "^2.6.1",
+    "prettier": "^3.7.4",
+    "ts-jest": "^29.4.6",
+    "typescript-eslint": "^8.52.0",
+    "yup": "^1.7.1",
+    "zod": "^4.3.5"
+  }
+}

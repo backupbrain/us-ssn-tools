@@ -1,0 +1,5 @@
+# Exclude unnecessary files
+src/
+tests/
+*.tsconfig
+*.test.ts
