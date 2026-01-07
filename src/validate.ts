@@ -1,50 +1,27 @@
-import { NormalizeSsnErr, normalizeSsnInput } from './normalize';
-
-export type SsnValidationFailureReason =
-  | 'INVALID_FORMAT'
-  | 'INVALID_AREA'
-  | 'INVALID_GROUP'
-  | 'INVALID_SERIAL'
-  | 'PUBLICLY_ADVERTISED';
-
-export type SsnRuleMode = 'pre2011' | 'post2011' | 'both';
-
-export type SsnValidationOkResult = {
-  ok: true;
-  normalized: string;
-};
-
-export type SsnValidationErrorResult = {
-  ok: false;
-  error: SsnValidationFailureReason;
-  message: string;
-};
-
-export type SsnValidationResult =
-  | SsnValidationOkResult
-  | SsnValidationErrorResult;
+export type SsnRuleMode = 'pre2011' | 'post2011';
 
 export interface ValidateSsnOptions {
   /**
-   * If true, accept either "#########" or "###-##-####" as input.
-   * If false, require exact "###-##-####" (or partial prefix of it if allowPartial=true).
+   * If true, input must be in ###-##-#### (or a valid prefix of it when allowPartial=true).
+   * If false, accepts either ###-##-#### or ######### (and prefixes).
+   *
+   * Default: true
    */
-  allowNoDashes?: boolean;
+  requireDashes?: boolean;
 
   /**
-   * Which rule-set(s) to accept.
-   * - "pre2011": apply stricter pre–Jun 25 2011 area rules (734–749, >=773 invalid)
-   * - "post2011": do NOT apply those extra area restrictions
-   * - "both": accept either (default)
+   * Pre-2011 is stricter on area numbers (734-749 and >= 773 are invalid).
+   * Post-2011 uses only the base area rules (000, 666, 900-999 invalid).
    *
-   * Note: base rules (area 000/666/900-999, group 00, serial 0000, public list) still apply.
+   * Default: "post2011"
    */
   ruleMode?: SsnRuleMode;
 
   /**
-   * If true, allow "checking-as-you-go":
-   * - partial prefixes are accepted as long as they could still become valid
-   * - returned normalized string is the sanitized, dash-normalized prefix
+   * If true, accept prefixes that are still potentially valid as the user types.
+   * If false, require a complete SSN.
+   *
+   * Default: false
    */
   allowPartial?: boolean;
 }
@@ -55,211 +32,148 @@ const PUBLICLY_ADVERTISED = new Set([
   '219-09-9999',
 ]);
 
-/**
- * Validates a US SSN with support for:
- * - strict full validation
- * - optional acceptance of no-dash input
- * - rule modes: pre2011 | post2011 | both (default)
- * - optional "checking-as-you-go" partial validation
- */ export function validateSsn(
+export function isValidSsn(
   input: string,
   opts: ValidateSsnOptions = {}
-): SsnValidationResult {
-  const allowNoDashes = opts.allowNoDashes ?? true;
-  const ruleMode = opts.ruleMode ?? 'both';
+): boolean {
+  const requireDashes = opts.requireDashes ?? true;
+  const ruleMode = opts.ruleMode ?? 'post2011';
   const allowPartial = opts.allowPartial ?? false;
 
-  const normalized = normalizeSsnInput(input, {
-    allowNoDashes,
-    allowPartial,
-  });
+  // 1) Format/prefix checks + digit extraction
+  const parsed = parseSsnInput(input, { requireDashes, allowPartial });
+  if (!parsed.ok) return false;
 
-  if (!normalized.ok) {
-    return {
-      ok: false,
-      error: 'INVALID_FORMAT',
-      message: (normalized as NormalizeSsnErr).message,
-    };
+  const digits = parsed.digits;
+
+  // In strict (non-partial) mode, require exactly 9 digits.
+  if (!allowPartial && digits.length !== 9) return false;
+
+  // 2) Rule checks (apply progressively in partial mode)
+  // Area (first 3)
+  if (digits.length >= 3) {
+    const area = Number(digits.slice(0, 3));
+    if (!isValidArea(area, ruleMode)) return false;
   }
 
-  const digits = normalized.digits;
-  const area = digits.slice(0, 3);
-  const group = digits.slice(3, 5);
-  const serial = digits.slice(5, 9);
-
-  if (!allowPartial && PUBLICLY_ADVERTISED.has(normalized.normalized)) {
-    return {
-      ok: false,
-      error: 'PUBLICLY_ADVERTISED',
-      message: 'This SSN is a known publicly advertised (and invalid) value.',
-    };
+  // Group (next 2)
+  if (digits.length >= 5) {
+    const group = Number(digits.slice(3, 5));
+    if (group === 0) return false; // "00"
   }
 
-  const ruleCheck = allowPartial
-    ? validatePartialSegments(area, group, serial, ruleMode)
-    : validateFullSegments(area, group, serial, ruleMode);
+  // Serial (last 4)
+  if (digits.length === 9) {
+    const serial = Number(digits.slice(5, 9));
+    if (serial === 0) return false; // "0000"
 
-  if (!ruleCheck.ok) return ruleCheck;
+    // Publicly advertised SSNs are always invalid
+    const dashed = `${digits.slice(0, 3)}-${digits.slice(3, 5)}-${digits.slice(5)}`;
+    if (PUBLICLY_ADVERTISED.has(dashed)) return false;
+  }
 
-  return { ok: true, normalized: normalized.normalized };
+  // If partial, any prefix that passed the progressive checks is considered valid so far.
+  return true;
 }
 
-/** Convenience boolean wrapper */
-export function isValidSsn(input: string, opts?: ValidateSsnOptions): boolean {
-  return validateSsn(input, opts).ok;
+/* ---------------- helpers ---------------- */
+
+function isValidArea(area: number, ruleMode: SsnRuleMode): boolean {
+  // Base rules (always)
+  if (area === 0) return false; // 000
+  if (area === 666) return false;
+  if (area >= 900) return false;
+
+  // Pre-2011 additional rules
+  if (ruleMode === 'pre2011') {
+    if (area >= 734 && area <= 749) return false;
+    if (area >= 773) return false;
+  }
+
+  return true;
 }
 
-function normalizePrefix(digits: string): string {
-  // digits: 0..9 chars
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 5) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 5)}-${digits.slice(5)}`;
-}
+function parseSsnInput(
+  input: string,
+  opts: { requireDashes: boolean; allowPartial: boolean }
+): { ok: true; digits: string } | { ok: false } {
+  const { requireDashes, allowPartial } = opts;
 
-/* -------------------------- Rules -------------------------- */
-
-function validateFullSegments(
-  area: string,
-  group: string,
-  serial: string,
-  ruleMode: SsnRuleMode
-): SsnValidationResult {
-  const areaNum = Number(area);
-  const groupNum = Number(group);
-  const serialNum = Number(serial);
-
-  // Base Rule 2: area cannot be 000, 666, or 900–999
-  if (areaNum === 0 || areaNum === 666 || areaNum >= 900) {
-    return {
-      ok: false,
-      error: 'INVALID_AREA',
-      message:
-        'Area number is not allowed (000, 666, and 900–999 are invalid).',
-    };
+  if (!allowPartial) {
+    // Full input only
+    if (/^\d{3}-\d{2}-\d{4}$/.test(input)) {
+      return { ok: true, digits: input.replace(/-/g, '') };
+    }
+    if (!requireDashes && /^\d{9}$/.test(input)) {
+      return { ok: true, digits: input };
+    }
+    return { ok: false };
   }
 
-  // Ruleset selection:
-  // - pre2011: apply extra reserved ranges
-  // - post2011: do not
-  // - both: accept if EITHER passes (so we only fail if it violates post rules AND pre rules)
-  const violatesPre2011 = (areaNum >= 734 && areaNum <= 749) || areaNum >= 773;
+  // Partial / typing-as-you-go
+  if (requireDashes) {
+    // Must be a prefix of ###-##-####
+    // Allowed prefixes include:
+    // "", "1", "12", "123", "123-", "123-4", "123-45", "123-45-", "123-45-6", ...
+    if (!/^[0-9-]*$/.test(input)) return { ok: false };
 
-  if (ruleMode === 'pre2011' && violatesPre2011) {
-    return {
-      ok: false,
-      error: 'INVALID_AREA',
-      message:
-        'Area number is not allowed under pre–June 25, 2011 rules (734–749 and >= 773 are invalid).',
-    };
-  }
-  if (ruleMode === 'both') {
-    // If it violates pre2011, it's still acceptable as post2011.
-    // So no action needed.
-  }
+    // Enforce dash positions and ordering as user types.
+    // Build digits while ensuring '-' only appears right after 3 and 5 digits (and at most once each).
+    let digits = '';
+    let sawDashAt3 = false;
+    let sawDashAt5 = false;
 
-  // Rule 3: group cannot be 00
-  if (groupNum === 0) {
-    return {
-      ok: false,
-      error: 'INVALID_GROUP',
-      message: 'Group number may not be 00.',
-    };
-  }
+    for (const ch of input) {
+      if (ch >= '0' && ch <= '9') {
+        if (digits.length >= 9) return { ok: false };
+        digits += ch;
+        continue;
+      }
 
-  // Rule 4: serial cannot be 0000
-  if (serialNum === 0) {
-    return {
-      ok: false,
-      error: 'INVALID_SERIAL',
-      message: 'Serial number may not be 0000.',
-    };
-  }
-
-  // Rule 7: publicly advertised checked in validateSsn (full only)
-  return { ok: true, normalized: `${area}-${group}-${serial}` };
-}
-
-function validatePartialSegments(
-  area: string,
-  group: string,
-  serial: string,
-  ruleMode: SsnRuleMode
-): SsnValidationResult {
-  // AREA checks while typing:
-  // - if first digit is '9', area can never be valid (since 900–999 invalid)
-  if (area.length >= 1 && area[0] === '9') {
-    return {
-      ok: false,
-      error: 'INVALID_AREA',
-      message: 'Area numbers starting with 9 are not allowed.',
-    };
-  }
-
-  // - if area is complete (3 digits), enforce base rule 2 and (optionally) pre2011 when in pre-only mode
-  if (area.length === 3) {
-    const areaNum = Number(area);
-
-    if (areaNum === 0 || areaNum === 666 || areaNum >= 900) {
-      return {
-        ok: false,
-        error: 'INVALID_AREA',
-        message:
-          'Area number is not allowed (000, 666, and 900–999 are invalid).',
-      };
+      // ch === '-'
+      if (digits.length === 3 && !sawDashAt3) {
+        sawDashAt3 = true;
+      } else if (digits.length === 5 && !sawDashAt5) {
+        sawDashAt5 = true;
+      } else {
+        return { ok: false };
+      }
     }
 
-    const violatesPre2011 =
-      (areaNum >= 734 && areaNum <= 749) || areaNum >= 773;
-    if (ruleMode === 'pre2011' && violatesPre2011) {
-      return {
-        ok: false,
-        error: 'INVALID_AREA',
-        message:
-          'Area number is not allowed under pre–June 25, 2011 rules (734–749 and >= 773 are invalid).',
-      };
-    }
-    // ruleMode "both" accepts either; "post2011" ignores extra restrictions.
+    // Also disallow typing digits past 3 without having placed the first dash (since requireDashes=true).
+    // The loop above already enforces this implicitly: "1234" contains no dash; it's allowed as digits,
+    // but would be a prefix of digits-only, not of dashed format. If you want "1234" to be invalid
+    // when requireDashes=true, enforce it here:
+    if (digits.length > 3 && !sawDashAt3) return { ok: false };
+    if (digits.length > 5 && !sawDashAt5) return { ok: false };
+
+    return { ok: true, digits };
   }
 
-  // GROUP checks while typing:
-  // Only enforce once group is complete (2 digits)
-  if (group.length === 2) {
-    const groupNum = Number(group);
-    if (groupNum === 0) {
-      return {
-        ok: false,
-        error: 'INVALID_GROUP',
-        message: 'Group number may not be 00.',
-      };
+  // requireDashes === false in partial mode:
+  // accept either digits-only prefixes or dashed prefixes (as long as dashes are in valid positions)
+  if (!/^[0-9-]*$/.test(input)) return { ok: false };
+
+  let digits = '';
+  let sawDashAt3 = false;
+  let sawDashAt5 = false;
+
+  for (const ch of input) {
+    if (ch >= '0' && ch <= '9') {
+      if (digits.length >= 9) return { ok: false };
+      digits += ch;
+      continue;
+    }
+
+    // '-' present: enforce positions (same as dashed typing), but do not require them.
+    if (digits.length === 3 && !sawDashAt3) {
+      sawDashAt3 = true;
+    } else if (digits.length === 5 && !sawDashAt5) {
+      sawDashAt5 = true;
+    } else {
+      return { ok: false };
     }
   }
 
-  // SERIAL checks while typing:
-  // Only enforce once serial is complete (4 digits)
-  if (serial.length === 4) {
-    const serialNum = Number(serial);
-    if (serialNum === 0) {
-      return {
-        ok: false,
-        error: 'INVALID_SERIAL',
-        message: 'Serial number may not be 0000.',
-      };
-    }
-
-    // Now that we have a full SSN in partial mode, also block publicly advertised.
-    const fullNormalized = `${area}-${group}-${serial}`;
-    if (PUBLICLY_ADVERTISED.has(fullNormalized)) {
-      return {
-        ok: false,
-        error: 'PUBLICLY_ADVERTISED',
-        message: 'This SSN is a known publicly advertised (and invalid) value.',
-      };
-    }
-  }
-
-  // If we haven't hit a definitive violation yet, it's valid "so far".
-  return {
-    ok: true,
-    normalized: normalizePrefix((area + group + serial).slice(0, 9)),
-  };
+  return { ok: true, digits };
 }

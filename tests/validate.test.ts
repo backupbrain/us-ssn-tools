@@ -1,220 +1,179 @@
-import { validateSsn } from '../src/validate';
-import type {
-  SsnValidationFailureReason,
-  SsnValidationResult,
-} from '../src/validate';
+import { isValidSsn } from '../src/validate';
 
-type SsnValid = Extract<SsnValidationResult, { ok: true }>;
-type SsnInvalid = Extract<SsnValidationResult, { ok: false }>;
+describe('isValidSsn', () => {
+  describe('defaults', () => {
+    test('default requires dashes and requires full SSN', () => {
+      // requireDashes defaults to true
+      expect(isValidSsn('123-45-6789')).toBe(true);
+      expect(isValidSsn('123456789')).toBe(false);
 
-function assertValid(res: SsnValidationResult): asserts res is SsnValid {
-  expect(res.ok).toBe(true);
-  if (res.ok !== true) {
-    throw new Error('Expected ok=true');
-  }
-}
+      // allowPartial defaults to false
+      expect(isValidSsn('123-45-6')).toBe(false);
+      expect(isValidSsn('123')).toBe(false);
+    });
 
-function assertInvalid(res: SsnValidationResult): asserts res is SsnInvalid {
-  expect(res.ok).toBe(false);
-  if (res.ok !== false) {
-    throw new Error('Expected ok=false');
-  }
-}
-
-function expectInvalid(
-  res: SsnValidationResult,
-  error: SsnValidationFailureReason
-) {
-  assertInvalid(res);
-  expect(res.error).toBe(error);
-  return res;
-}
-
-function expectValid(res: SsnValidationResult, normalized?: string) {
-  assertValid(res);
-  if (normalized !== undefined) expect(res.normalized).toBe(normalized);
-  return res;
-}
-
-describe('validateSsn (full / strict)', () => {
-  test('accepts valid formatted SSN', () => {
-    expectValid(validateSsn('123-45-6789'), '123-45-6789');
+    test('default ruleMode is post2011', () => {
+      // 773 is allowed in post2011
+      expect(isValidSsn('773-12-3456')).toBe(true);
+    });
   });
 
-  test('accepts 9 digits by default and normalizes with dashes', () => {
-    expectValid(validateSsn('123456789'), '123-45-6789');
-  });
+  describe('format rules', () => {
+    test('requireDashes=false accepts digits-only and dashed full SSNs', () => {
+      expect(isValidSsn('123456789', { requireDashes: false })).toBe(true);
+      expect(isValidSsn('123-45-6789', { requireDashes: false })).toBe(true);
+    });
 
-  test('rejects wrong format', () => {
-    const bad = [
-      '123-456-789',
-      '12-345-6789',
-      '123--45-6789',
-      '1e10',
-      '2.39',
-      '😀',
-    ];
-    for (const input of bad) {
-      expectInvalid(validateSsn(input), 'INVALID_FORMAT');
-    }
-  });
-
-  test('rejects publicly advertised SSNs', () => {
-    const bad = ['078-05-1120', '721-07-4426', '219-09-9999'];
-    for (const input of bad) {
-      expectInvalid(validateSsn(input), 'PUBLICLY_ADVERTISED');
-    }
-  });
-
-  describe('Area rules (base)', () => {
-    test.each([
-      ['000-12-3456', 'INVALID_AREA'],
-      ['666-12-3456', 'INVALID_AREA'],
-      ['900-12-3456', 'INVALID_AREA'],
-      ['999-12-3456', 'INVALID_AREA'],
-    ] satisfies Array<[string, SsnValidationFailureReason]>)(
-      'rejects reserved area %s',
-      (input, err) => {
-        expectInvalid(validateSsn(input), err);
+    test('rejects wrong formatting', () => {
+      const bad = [
+        '123-456-789',
+        '12-345-6789',
+        '123--45-6789',
+        '123-45-678',
+        '123-45-67890',
+        'abc',
+        '1e10',
+        '2.39',
+        '😀',
+      ];
+      for (const input of bad) {
+        expect(isValidSsn(input)).toBe(false);
       }
-    );
+    });
+  });
 
-    test.each(['001-12-3456', '665-12-3456', '667-12-3456', '899-12-3456'])(
-      'accepts allowed area %s',
-      (input) => {
-        expectValid(validateSsn(input));
+  describe('publicly advertised SSNs', () => {
+    test.each(['078-05-1120', '721-07-4426', '219-09-9999'])(
+      'rejects publicly advertised SSN %s',
+      (ssn) => {
+        expect(isValidSsn(ssn)).toBe(false);
+        expect(
+          isValidSsn(ssn.replace(/-/g, ''), { requireDashes: false })
+        ).toBe(false);
       }
     );
   });
 
-  describe('Group + serial rules', () => {
+  describe('base SSN rules (always apply)', () => {
+    test('rejects invalid area numbers: 000, 666, 900-999', () => {
+      expect(isValidSsn('000-12-3456')).toBe(false);
+      expect(isValidSsn('666-12-3456')).toBe(false);
+      expect(isValidSsn('900-12-3456')).toBe(false);
+      expect(isValidSsn('999-12-3456')).toBe(false);
+    });
+
     test('rejects group 00', () => {
-      expectInvalid(validateSsn('123-00-6789'), 'INVALID_GROUP');
+      expect(isValidSsn('123-00-6789')).toBe(false);
     });
 
     test('rejects serial 0000', () => {
-      expectInvalid(validateSsn('123-45-0000'), 'INVALID_SERIAL');
+      expect(isValidSsn('123-45-0000')).toBe(false);
     });
 
-    test('rejects group 00 and serial 0000 together (deterministic precedence)', () => {
-      // your implementation checks group before serial
-      expectInvalid(validateSsn('123-00-0000'), 'INVALID_GROUP');
+    test('accepts nearby valid areas', () => {
+      expect(isValidSsn('665-12-3456')).toBe(true);
+      expect(isValidSsn('667-12-3456')).toBe(true);
+      expect(isValidSsn('899-12-3456')).toBe(true);
     });
   });
 
-  describe('ruleMode behavior (pre2011 vs post2011 vs both)', () => {
+  describe('ruleMode: pre2011 vs post2011', () => {
     test('pre2011 rejects 734-749 and >= 773', () => {
-      const bad = ['734-12-3456', '749-12-3456', '773-12-3456'];
-      for (const input of bad) {
-        expectInvalid(
-          validateSsn(input, { ruleMode: 'pre2011' }),
-          'INVALID_AREA'
-        );
+      const bad = ['734-12-3456', '749-12-3456', '773-12-3456', '899-12-3456'];
+      for (const ssn of bad) {
+        expect(isValidSsn(ssn, { ruleMode: 'pre2011' })).toBe(false);
       }
     });
 
-    test('post2011 allows areas that are only invalid under pre2011 rules', () => {
+    test('post2011 allows areas that are only invalid pre2011', () => {
       const ok = ['734-12-3456', '749-12-3456', '773-12-3456', '899-12-3456'];
-      for (const input of ok) {
-        expectValid(validateSsn(input, { ruleMode: 'post2011' }));
+      for (const ssn of ok) {
+        expect(isValidSsn(ssn, { ruleMode: 'post2011' })).toBe(true);
+      }
+    });
+  });
+
+  describe('allowPartial (valid-so-far semantics)', () => {
+    test('requireDashes=true: dashed prefixes only (digits beyond 3 require dash)', () => {
+      // prefixes allowed
+      expect(isValidSsn('', { allowPartial: true })).toBe(true);
+      expect(isValidSsn('1', { allowPartial: true })).toBe(true);
+      expect(isValidSsn('12', { allowPartial: true })).toBe(true);
+      expect(isValidSsn('123', { allowPartial: true })).toBe(true);
+      expect(isValidSsn('123-', { allowPartial: true })).toBe(true);
+      expect(isValidSsn('123-4', { allowPartial: true })).toBe(true);
+      expect(isValidSsn('123-45', { allowPartial: true })).toBe(true);
+      expect(isValidSsn('123-45-', { allowPartial: true })).toBe(true);
+      expect(isValidSsn('123-45-6', { allowPartial: true })).toBe(true);
+
+      // digits-only beyond 3 is NOT a valid dashed prefix
+      expect(isValidSsn('1234', { allowPartial: true })).toBe(false);
+      expect(isValidSsn('12345', { allowPartial: true })).toBe(false);
+    });
+
+    test('requireDashes=true: rejects dashes in wrong positions while typing', () => {
+      const bad = ['-', '1-', '12-', '123--', '123-4-', '123-45--', '1234-5'];
+      for (const input of bad) {
+        expect(isValidSsn(input, { allowPartial: true })).toBe(false);
       }
     });
 
-    test('"both" (default) accepts areas that fail pre2011 but pass post2011', () => {
-      // invalid pre2011-only, valid post2011
-      expectValid(validateSsn('773-12-3456'), '773-12-3456');
+    test('requireDashes=false: accepts digits-only prefixes and dashed prefixes', () => {
+      expect(
+        isValidSsn('1234', { allowPartial: true, requireDashes: false })
+      ).toBe(true);
+      expect(
+        isValidSsn('12345', { allowPartial: true, requireDashes: false })
+      ).toBe(true);
+      expect(
+        isValidSsn('123456', { allowPartial: true, requireDashes: false })
+      ).toBe(true);
+
+      expect(
+        isValidSsn('123-4', { allowPartial: true, requireDashes: false })
+      ).toBe(true);
+      expect(
+        isValidSsn('123-45-6', { allowPartial: true, requireDashes: false })
+      ).toBe(true);
     });
 
-    test('"both" still rejects base-invalid areas', () => {
-      expectInvalid(validateSsn('900-12-3456'), 'INVALID_AREA');
+    test('applies progressive validity checks in partial mode', () => {
+      // As soon as area is complete, area rules apply
+      expect(isValidSsn('000', { allowPartial: true })).toBe(false);
+      expect(isValidSsn('666', { allowPartial: true })).toBe(false);
+      expect(isValidSsn('900', { allowPartial: true })).toBe(false);
+
+      // Group rule applies once group is complete (5 digits)
+      expect(isValidSsn('123-00', { allowPartial: true })).toBe(false);
+      expect(isValidSsn('123-01', { allowPartial: true })).toBe(true);
+
+      // Serial rule applies only when full 9 digits are present
+      expect(isValidSsn('123-45-0', { allowPartial: true })).toBe(true);
+      expect(isValidSsn('123-45-0000', { allowPartial: true })).toBe(false);
     });
-  });
 
-  describe('allowNoDashes option', () => {
-    test('allowNoDashes=false rejects digit-only SSN', () => {
-      expectInvalid(
-        validateSsn('123456789', { allowNoDashes: false }),
-        'INVALID_FORMAT'
-      );
+    test('pre2011 rules in partial mode apply once area is complete', () => {
+      expect(
+        isValidSsn('773', {
+          allowPartial: true,
+          requireDashes: false,
+          ruleMode: 'pre2011',
+        })
+      ).toBe(false);
+      expect(
+        isValidSsn('772', {
+          allowPartial: true,
+          requireDashes: false,
+          ruleMode: 'pre2011',
+        })
+      ).toBe(true);
     });
 
-    test('allowNoDashes=false still accepts dashed SSN', () => {
-      expectValid(
-        validateSsn('123-45-6789', { allowNoDashes: false }),
-        '123-45-6789'
-      );
+    test('rejects more than 9 digits while typing', () => {
+      expect(isValidSsn('123-45-67890', { allowPartial: true })).toBe(false);
+      expect(
+        isValidSsn('1234567890', { allowPartial: true, requireDashes: false })
+      ).toBe(false);
     });
-  });
-});
-
-describe('validateSsn (typing / allowPartial)', () => {
-  test.each([
-    ['', true, ''],
-    ['1', true, '1'],
-    ['12', true, '12'],
-    ['123', true, '123'],
-    ['1234', true, '123-4'],
-    ['12345', true, '123-45'],
-    ['123456', true, '123-45-6'],
-    ['123456789', true, '123-45-6789'],
-    ['123-', true, '123'],
-    ['123-4', true, '123-4'],
-    ['123-45-', true, '123-45'],
-    ['123-45-6', true, '123-45-6'],
-    ['12345-6789', true, '123-45-6789'],
-  ])('partial input %p', (input, ok, normalized) => {
-    const res = validateSsn(input, { allowPartial: true });
-    if (ok) expectValid(res, normalized);
-    else expect(res.ok).toBe(false);
-  });
-
-  test('rejects impossible prefixes early (area starts with 9)', () => {
-    expectInvalid(validateSsn('9', { allowPartial: true }), 'INVALID_AREA');
-  });
-
-  test('rejects invalid dash placements while typing', () => {
-    const bad = ['-', '1-', '12-', '123--', '123-4-', '123-45--', '1234-5'];
-    for (const input of bad) {
-      expectInvalid(
-        validateSsn(input, { allowPartial: true }),
-        'INVALID_FORMAT'
-      );
-    }
-  });
-
-  test('once group is complete, group=00 becomes invalid', () => {
-    expectValid(validateSsn('123-0', { allowPartial: true })); // still possible
-
-    expectInvalid(
-      validateSsn('123-00', { allowPartial: true }),
-      'INVALID_GROUP'
-    );
-  });
-
-  test('once serial is complete, serial=0000 becomes invalid', () => {
-    expectValid(validateSsn('123-45-0', { allowPartial: true })); // still possible
-
-    expectInvalid(
-      validateSsn('123-45-0000', { allowPartial: true }),
-      'INVALID_SERIAL'
-    );
-  });
-
-  test('publicly advertised SSNs are rejected once full value is typed', () => {
-    expectValid(validateSsn('078-05-112', { allowPartial: true })); // prefix ok
-
-    expectInvalid(
-      validateSsn('078-05-1120', { allowPartial: true }),
-      'PUBLICLY_ADVERTISED'
-    );
-  });
-
-  test('ruleMode=pre2011 rejects area ranges as soon as area is complete', () => {
-    expectValid(validateSsn('73', { allowPartial: true, ruleMode: 'pre2011' })); // not complete
-
-    expectInvalid(
-      validateSsn('734', { allowPartial: true, ruleMode: 'pre2011' }),
-      'INVALID_AREA'
-    );
   });
 });

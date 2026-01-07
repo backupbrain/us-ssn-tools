@@ -1,228 +1,147 @@
 import { maskSsn } from '../src/mask';
 
-describe('maskSsn', () => {
-  describe('full SSNs', () => {
-    test('masks all digits by default and preserves dashes', () => {
+describe('maskSsn (normalize -> mask -> format)', () => {
+  describe('defaults', () => {
+    test('masks full dashed SSN and preserves dash formatting', () => {
       expect(maskSsn('123-45-6789')).toBe('***-**-****');
     });
 
-    test('revealLast4 keeps last 4 digits unmasked and preserves dashes', () => {
-      expect(maskSsn('123-45-6789', { revealLast4: true })).toBe('***-**-6789');
-    });
-
-    test('digits-only input is normalized by default (dashMode=normalize)', () => {
+    test('masks full digits-only SSN but outputs dashed by default', () => {
       expect(maskSsn('123456789')).toBe('***-**-****');
-      expect(maskSsn('123456789', { revealLast4: true })).toBe('***-**-6789');
     });
 
-    test('dashMode=preserve keeps digits-only output for digits-only input', () => {
-      expect(maskSsn('123456789', { dashMode: 'preserve' })).toBe('*********');
+    test('masks partial as you type (default allowPartial=true)', () => {
+      expect(maskSsn('1')).toBe('*');
+      expect(maskSsn('12')).toBe('**');
+      expect(maskSsn('123')).toBe('***');
+      expect(maskSsn('1234')).toBe('***-*');
+      expect(maskSsn('12345')).toBe('***-**');
+      expect(maskSsn('123456')).toBe('***-**-*');
+      expect(maskSsn('1234567')).toBe('***-**-**');
+      expect(maskSsn('12345678')).toBe('***-**-***');
+      expect(maskSsn('123456789')).toBe('***-**-****');
+    });
+
+    test('extracts digits from mixed input (UI best-effort)', () => {
+      expect(maskSsn('SSN: 12a3-4')).toBe('***-*');
+      expect(maskSsn('SSN: 123 45 6789')).toBe('***-**-****');
+      expect(maskSsn('123😀45😅6789')).toBe('***-**-****');
+    });
+  });
+
+  describe('digitsOnly', () => {
+    test('digitsOnly=true returns masked digits without dashes', () => {
+      expect(maskSsn('123-45-6789', { digitsOnly: true })).toBe('*********');
+      expect(maskSsn('123456789', { digitsOnly: true })).toBe('*********');
+    });
+
+    test('digitsOnly=true preserves partial length without inserting dashes', () => {
+      expect(maskSsn('1234', { digitsOnly: true })).toBe('****');
+      expect(maskSsn('12345', { digitsOnly: true })).toBe('*****');
+      expect(maskSsn('123456', { digitsOnly: true })).toBe('******');
+    });
+  });
+
+  describe('maskChar', () => {
+    test('can change maskChar (only first char is used)', () => {
+      expect(maskSsn('123-45-6789', { maskChar: '•' })).toBe('•••-••-••••');
+      expect(maskSsn('123-45-6789', { maskChar: '***' })).toBe('***-**-****');
+      expect(maskSsn('123456789', { digitsOnly: true, maskChar: 'X' })).toBe(
+        'XXXXXXXXX'
+      );
+    });
+
+    test("empty maskChar falls back to '*'", () => {
+      expect(maskSsn('123-45-6789', { maskChar: '' })).toBe('***-**-****');
+    });
+  });
+
+  describe('revealLast4 (serial-only reveal)', () => {
+    test('does not reveal anything before serial begins (<=5 digits)', () => {
+      expect(maskSsn('12345', { revealLast4: true })).toBe('***-**');
+      expect(maskSsn('123-45', { revealLast4: true })).toBe('***-**');
+    });
+
+    test('reveals serial digits as they are typed (6..9 digits)', () => {
+      expect(maskSsn('123456', { revealLast4: true })).toBe('***-**-6');
+      expect(maskSsn('1234567', { revealLast4: true })).toBe('***-**-67');
+      expect(maskSsn('12345678', { revealLast4: true })).toBe('***-**-678');
+      expect(maskSsn('123456789', { revealLast4: true })).toBe('***-**-6789');
+
+      // dashed input should behave the same
+      expect(maskSsn('123-45-6', { revealLast4: true })).toBe('***-**-6');
+    });
+
+    test('digitsOnly + revealLast4 reveals the last serial digits while masking earlier digits', () => {
+      expect(maskSsn('123456', { digitsOnly: true, revealLast4: true })).toBe(
+        '*****6'
+      );
       expect(
-        maskSsn('123456789', { dashMode: 'preserve', revealLast4: true })
+        maskSsn('123456789', { digitsOnly: true, revealLast4: true })
       ).toBe('*****6789');
     });
+  });
 
-    test('dashMode=preserve keeps dashed output for dashed input', () => {
-      expect(maskSsn('123-45-6789', { dashMode: 'preserve' })).toBe(
+  describe('allowPartial', () => {
+    test('allowPartial=false does not format partial input; still masks digits it can extract', () => {
+      // normalizeSsnInput with allowPartial=false returns input unchanged if not 9 digits,
+      // but maskSsn normalizes digitsOnly:true, so it still extracts digits and masks them.
+      expect(maskSsn('1234', { allowPartial: false })).toBe('***-*'); // because formatting happens after masking
+      expect(maskSsn('12a3', { allowPartial: false, digitsOnly: true })).toBe(
+        '***'
+      );
+    });
+
+    test('allowPartial=false formats once 9 digits exist', () => {
+      expect(maskSsn('123456789', { allowPartial: false })).toBe('***-**-****');
+      expect(maskSsn('123-45-6789', { allowPartial: false })).toBe(
+        '***-**-****'
+      );
+    });
+  });
+
+  describe('overflow digits + enforceLength', () => {
+    test('by default (enforceLength=false) allows overflow digits and appends after serial in dashed output', () => {
+      expect(maskSsn('1234567890')).toBe('***-**-*****'); // 10 digits => 9 masked as "***-**-****" + extra "*"
+      expect(maskSsn('12345678999')).toBe('***-**-******'); // 11 digits => 9 masked + 2 masked overflow
+    });
+
+    test('digitsOnly keeps overflow in masked output when enforceLength=false', () => {
+      expect(maskSsn('12345678999', { digitsOnly: true })).toBe('***********');
+    });
+
+    test('enforceLength=true caps at 9 digits', () => {
+      expect(maskSsn('12345678999', { enforceLength: true })).toBe(
         '***-**-****'
       );
       expect(
-        maskSsn('123-45-6789', { dashMode: 'preserve', revealLast4: true })
-      ).toBe('***-**-6789');
-    });
-
-    test('maskChar can be changed (only first char is used)', () => {
-      expect(maskSsn('123-45-6789', { maskChar: '*' })).toBe('***-**-****');
-      expect(
-        maskSsn('123-45-6789', { maskChar: '***', revealLast4: true })
-      ).toBe('***-**-6789');
-    });
-  });
-
-  describe('partial / typing-as-you-go', () => {
-    test.each([
-      ['', ''] as const,
-      ['1', '*'] as const,
-      ['12', '**'] as const,
-      ['123', '***'] as const,
-      ['1234', '***-*'] as const,
-      ['12345', '***-**'] as const,
-      ['123456', '***-**-*'] as const,
-      ['1234567', '***-**-**'] as const,
-      ['12345678', '***-**-***'] as const,
-      ['123456789', '***-**-****'] as const,
-    ])('dashMode=normalize masks "%s" -> "%s"', (input, expected) => {
-      expect(
-        maskSsn(input, { allowPartial: true, dashMode: 'normalize' })
-      ).toBe(expected);
-    });
-
-    test('accepts dashed partial input and preserves dashes (normalize mode still normalizes positions)', () => {
-      expect(maskSsn('123-', { allowPartial: true })).toBe('***');
-      expect(maskSsn('123-4', { allowPartial: true })).toBe('***-*');
-      expect(maskSsn('123-45-', { allowPartial: true })).toBe('***-**');
-      expect(maskSsn('123-45-6', { allowPartial: true })).toBe('***-**-*');
-    });
-
-    test('dashMode=preserve keeps digits-only output when input has no dashes', () => {
-      expect(
-        maskSsn('1234', { allowPartial: true, dashMode: 'preserve' })
-      ).toBe('****');
-      expect(
-        maskSsn('12345', { allowPartial: true, dashMode: 'preserve' })
-      ).toBe('*****');
-      expect(
-        maskSsn('123456', { allowPartial: true, dashMode: 'preserve' })
-      ).toBe('******');
-    });
-
-    test('dashMode=preserve keeps dashed output when input has dashes', () => {
-      expect(
-        maskSsn('123-4', { allowPartial: true, dashMode: 'preserve' })
-      ).toBe('***-*');
-      expect(
-        maskSsn('123-45', { allowPartial: true, dashMode: 'preserve' })
-      ).toBe('***-**');
-      expect(
-        maskSsn('123-45-6', { allowPartial: true, dashMode: 'preserve' })
-      ).toBe('***-**-*');
-    });
-
-    test('revealLast4 reveals only serial digits as they are typed (never area/group)', () => {
-      // < 4 digits: nothing to reveal
-      expect(maskSsn('1', { allowPartial: true, revealLast4: true })).toBe('*');
-      expect(maskSsn('123', { allowPartial: true, revealLast4: true })).toBe(
-        '***'
-      );
-
-      // exactly 4 digits: reveal those 4 (so zero masked digits)
-      expect(maskSsn('1234', { allowPartial: true, revealLast4: true })).toBe(
-        '***-*'
-      );
-
-      // 5 digits: mask first digit, reveal last 4 digits
-      expect(maskSsn('12345', { allowPartial: true, revealLast4: true })).toBe(
-        '***-**'
-      );
-
-      // 6 digits: mask first 2 digits, reveal last 4 digits
-      expect(maskSsn('123456', { allowPartial: true, revealLast4: true })).toBe(
-        '***-**-6'
-      );
-
-      // full: classic behavior
-      expect(
-        maskSsn('123456789', { allowPartial: true, revealLast4: true })
-      ).toBe('***-**-6789');
-    });
-  });
-
-  describe('invalid partial input best-effort behavior', () => {
-    test('by default, invalid partial input masks digits but preserves dashes and other chars', () => {
-      // invalid because of space; best-effort masks digits, keeps space
-      expect(maskSsn('12 3', { allowPartial: true })).toBe('** *');
-
-      // invalid dash placement: still best-effort masks digits and keeps dashes
-      expect(maskSsn('1-', { allowPartial: true })).toBe('*-');
-    });
-
-    test('if bestEffortOnInvalidPartial=false, invalid input is returned unchanged', () => {
-      expect(
-        maskSsn('12 3', {
-          allowPartial: true,
-          bestEffortOnInvalidPartial: false,
-        })
-      ).toBe('** *');
-      expect(
-        maskSsn('1-', { allowPartial: true, bestEffortOnInvalidPartial: false })
-      ).toBe('*-');
-    });
-
-    test('if allowPartial=false and input is invalid, returns input unchanged', () => {
-      expect(maskSsn('12 3', { allowPartial: false })).toBe('** *');
-    });
-  });
-
-  describe('allowNoDashes option', () => {
-    test('allowNoDashes=false still accepts dashed input in strict mode', () => {
-      expect(
-        maskSsn('123-45-6789', { allowNoDashes: false, allowPartial: false })
-      ).toBe('***-**-****');
-    });
-
-    test('allowNoDashes=false still allows digits-only input (and may normalize dashes depending on dashMode)', () => {
-      // digits-only is fine; allowNoDashes only controls whether '-' is allowed.
-      expect(
-        maskSsn('1234', {
-          allowPartial: true,
-          allowNoDashes: false,
-          dashMode: 'normalize',
-        })
-      ).toBe('***-*');
-      expect(
-        maskSsn('1234', {
-          allowPartial: true,
-          allowNoDashes: false,
-          dashMode: 'preserve',
-        })
-      ).toBe('****');
-    });
-
-    test('allowNoDashes=false rejects inputs containing dashes; in partial mode best-effort masks', () => {
-      // now normalization fails because '-' is not allowed
-      expect(
-        maskSsn('123-4', { allowPartial: true, allowNoDashes: false })
-      ).toBe('***-*');
-    });
-
-    test('allowNoDashes=false rejects digits-only SSN in strict mode (returns unchanged)', () => {
-      // In strict mode, digits-only is invalid when allowNoDashes=false
-      expect(
-        maskSsn('123456789', { allowNoDashes: false, allowPartial: false })
+        maskSsn('12345678999', { enforceLength: true, digitsOnly: true })
       ).toBe('*********');
     });
 
-    test('allowNoDashes=false still supports dashed input when allowPartial=false?', () => {
-      // In strict mode, invalid => returns input unchanged (per current implementation)
+    test('enforceLength=true + revealLast4 reveals only within first 9 digits', () => {
       expect(
-        maskSsn('123-45-6789', { allowNoDashes: false, allowPartial: false })
-      ).toBe('***-**-****');
+        maskSsn('12345678999', { enforceLength: true, revealLast4: true })
+      ).toBe('***-**-6789');
+      expect(
+        maskSsn('12345678999', {
+          enforceLength: true,
+          digitsOnly: true,
+          revealLast4: true,
+        })
+      ).toBe('*****6789');
     });
   });
-});
 
-describe('maskSsn - maskChar', () => {
-  test('can change the masking character for full SSNs', () => {
-    expect(maskSsn('123-45-6789', { maskChar: '#' })).toBe('###-##-####');
-    expect(maskSsn('123-45-6789', { maskChar: 'X', revealLast4: true })).toBe(
-      'XXX-XX-6789'
-    );
-  });
+  describe('non-digit-only input edge cases', () => {
+    test('returns empty string when no digits exist (dashed output)', () => {
+      expect(maskSsn('abc')).toBe('');
+      expect(maskSsn('----')).toBe('');
+      expect(maskSsn('😀')).toBe('');
+    });
 
-  test('uses only the first character of maskChar', () => {
-    expect(maskSsn('123-45-6789', { maskChar: '###' })).toBe('###-##-####');
-    expect(maskSsn('123-45-6789', { maskChar: 'AB', revealLast4: true })).toBe(
-      'AAA-AA-6789'
-    );
-  });
-
-  test('falls back to default when maskChar is empty', () => {
-    expect(maskSsn('123-45-6789', { maskChar: '' })).toBe('***-**-****');
-  });
-
-  test('applies maskChar while typing (partial)', () => {
-    expect(maskSsn('1234', { allowPartial: true, maskChar: '#' })).toBe(
-      '###-#'
-    );
-    expect(maskSsn('123456', { allowPartial: true, maskChar: '#' })).toBe(
-      '###-##-#'
-    );
-  });
-
-  test('applies maskChar with revealLast4 while typing', () => {
-    // 5 digits typed -> 1 masked + last 4 revealed
-    expect(
-      maskSsn('12345', { allowPartial: true, maskChar: '#', revealLast4: true })
-    ).toBe('###-##');
+    test('returns empty string when no digits exist (digitsOnly)', () => {
+      expect(maskSsn('abc', { digitsOnly: true })).toBe('');
+    });
   });
 });
