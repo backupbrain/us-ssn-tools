@@ -1,6 +1,6 @@
 {
   "name": "us-ssn-tools",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Validate, format, mask, and generate US social security numbers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
