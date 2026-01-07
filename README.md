@@ -306,3 +306,14 @@ await yupSsnSubmit().validate("123456789");
 ## License
 
 ISC
+
+## Support This Project
+
+If you find this project useful, consider supporting me to help keep it maintained and improved:
+
+- [Sponsor on GitHub](https://github.com/sponsors/backupbrain)
+- [Buy Me a Coffee](https://www.buymeacoffee.com/backupbrain)
+- [Ko-fi](https://ko-fi.com/backupbrain)
+- [Thanks.dev](https://thanks.dev/u/gh/backupbrain)
+
+Your support is greatly appreciated!
