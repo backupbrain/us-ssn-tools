@@ -193,15 +193,6 @@ maskSsn("123-45-6", { allowPartial: true, revealLast4: true });
 
 ## Generation
 
-### `generateSsn(options)`
-Absolutely — that’s an important point, and it’s worth stating **clearly but professionally**, without sounding alarmist.
-
-Here’s a **polished replacement** for the **Generation** section note that you can drop straight into the README.
-
----
-
-## Generation
-
 Generates realistic-looking SSNs for testing, demos, and development.
 
 ```ts
